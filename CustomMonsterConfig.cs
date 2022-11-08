@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Drawing;
 using Terraria;
-using Hooks;
 using TShockAPI;
 using TShockAPI.DB;
 using System.ComponentModel;

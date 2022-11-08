@@ -1,7 +1,6 @@
 ﻿using System;
 //using System.Collections.Generic;
 using Terraria;
-using Hooks;
 using TShockAPI;
 using TShockAPI.DB;
 using System.ComponentModel;

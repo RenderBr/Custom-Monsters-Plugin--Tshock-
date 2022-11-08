@@ -2,16 +2,17 @@
 using System.Collections.Generic;
 using System.Threading;
 using Terraria;
-using Hooks;
+using TerrariaApi.Server;
 using TShockAPI;
 using TShockAPI.DB;
 using System.ComponentModel;
 using System.IO;
 using System.Reflection;
+using Microsoft.Xna.Framework;
 
 namespace CustomMonsters
 {
-    [APIVersion(1, 12)]
+    [ApiVersion(2, 1)]
     public class CustomMonstersPlugin : TerrariaPlugin
     {
         private static CustomMonsterConfigFile CMConfig { get; set; }
@@ -104,30 +105,31 @@ namespace CustomMonsters
         {
             Init = DateTime.Now;
 
-            GameHooks.Update += OnUpdate;
-            GameHooks.Initialize += OnInitialize;
-            NetHooks.GreetPlayer += OnGreetPlayer;
-            ServerHooks.Leave += OnLeave;
-            ServerHooks.Chat += OnChat;
-            NetHooks.GetData += OnGetData;
+            ServerApi.Hooks.GameUpdate.Register(this, OnUpdate);
+            ServerApi.Hooks.GameInitialize.Register(this, OnInitialize);
+            ServerApi.Hooks.NetGreetPlayer.Register(this, OnGreetPlayer);
+            ServerApi.Hooks.ServerLeave.Register(this, OnLeave);
+            ServerApi.Hooks.ServerChat.Register(this, OnChat);
+            ServerApi.Hooks.NetGetData.Register(this, OnGetData);
             //NpcHooks.NetDefaults += OnNetDefaults;
-            NpcHooks.SetDefaultsInt += OnSetDefaultsInt;
-            NpcHooks.SetDefaultsString += OnSetDefaultsString;
+            ServerApi.Hooks.NpcSetDefaultsInt.Register(this, OnSetDefaultsInt);
+            ServerApi.Hooks.NpcSetDefaultsString.Register(this, OnSetDefaultsString);
+
         }
 
         protected override void Dispose(bool disposing)
         {
             if (disposing)
             {
-                GameHooks.Update -= OnUpdate;
-                GameHooks.Initialize -= OnInitialize;
-                NetHooks.GreetPlayer -= OnGreetPlayer;
-                ServerHooks.Leave -= OnLeave;
-                ServerHooks.Chat -= OnChat;
-                NetHooks.GetData -= OnGetData;
-                //NpcHooks.NetDefaults -= OnNetDefaults;
-                NpcHooks.SetDefaultsInt -= OnSetDefaultsInt;
-                NpcHooks.SetDefaultsString -= OnSetDefaultsString;
+                ServerApi.Hooks.GameUpdate.Deregister(this, OnUpdate);
+                ServerApi.Hooks.GameInitialize.Deregister(this, OnInitialize);
+                ServerApi.Hooks.NetGreetPlayer.Deregister(this, OnGreetPlayer);
+                ServerApi.Hooks.ServerLeave.Deregister(this, OnLeave);
+                ServerApi.Hooks.ServerChat.Deregister(this, OnChat);
+                ServerApi.Hooks.NetGetData.Deregister(this, OnGetData);
+                //NpcHooks.NetDefaults += OnNetDefaults;
+                ServerApi.Hooks.NpcSetDefaultsInt.Deregister(this, OnSetDefaultsInt);
+                ServerApi.Hooks.NpcSetDefaultsString.Deregister(this, OnSetDefaultsString);
             }
             base.Dispose(disposing);
         }
@@ -196,7 +198,7 @@ namespace CustomMonsters
             }
         }
 
-        private void OnInitialize()
+        private void OnInitialize(EventArgs args)
         {
             LoadAllCustomMonsters();
             Commands.ChatCommands.Add(new Command("spawncustommonsters", SpawnCustomMonsterPlayer, "scm"));
@@ -204,7 +206,7 @@ namespace CustomMonsters
 
         }
 
-        private void OnUpdate()
+        private void OnUpdate(EventArgs args)
         {
             SpawnInZones();
             HandleShooters();
@@ -218,23 +220,27 @@ namespace CustomMonsters
             RemoveInactive();
         }
 
-        private void OnGreetPlayer(int who, HandledEventArgs e)
+        private void OnGreetPlayer(GreetPlayerEventArgs args)
         {
+            var who = args.Who;
+
             lock (CMPlayers)
             {
                 CMPlayers.Add(new CMPlayer(who));
             }
         }
 
-        private void OnLeave(int ply)
+        private void OnLeave(LeaveEventArgs args)
         {
+            var who = args.Who;
+
             lock (CMPlayers)
             {
-                CMPlayers.Remove(CMPlayers.Find(player => player.Index == ply));
+                CMPlayers.Remove(CMPlayers[who]);
             }
         }
 
-        private void OnChat(messageBuffer msg, int ply, string text, HandledEventArgs e)
+        private void OnChat(ServerChatEventArgs args)
         {
         }
 
@@ -254,8 +260,8 @@ namespace CustomMonsters
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine("Error in (CM) config file");
                 Console.ForegroundColor = ConsoleColor.Gray;
-                Log.Error("(CM) Config Exception");
-                Log.Error(ex.ToString());
+                Console.Error.WriteLine("(CM) Config Exception");
+                Console.Error.WriteLine(ex.ToString());
             }
         }
 
@@ -280,7 +286,12 @@ namespace CustomMonsters
                                            Color.Yellow);
                 }
                 else
-                    args.Player.SendMessage("no Custom Monster Matched", Color.Red);
+                    args.Player.SendMessage("No Custom Monster Matched", Color.Red);
+            }
+            else
+            {
+                args.Player.SendErrorMessage("No arguments found! /scm <name> (quantity)");
+                return;
             }
         }
 
@@ -293,10 +304,9 @@ namespace CustomMonsters
         private static void CustomizeMonster(int npcid, CustomMonsterType CMType, int modlevel, int life = -1)
         {
             NPC Custom = Main.npc[npcid];
-            Custom.netDefaults(CMType.BaseType);
+            Custom.SetDefaults(CMType.BaseType);
 
-            Custom.name = CMType.Name;
-            Custom.displayName = CMType.Name;
+            Custom.GivenName = CMType.Name;
             Custom.lifeMax = CMType.Life ?? Custom.lifeMax;
             Custom.life = life <= 0 ? (CMType.Life ?? Custom.life) : life;
 
@@ -314,17 +324,17 @@ namespace CustomMonsters
             if( fire )
             {
                 Custom.AddBuff(24, 6000);
-                NetMessage.SendData(53, -1, -1, "", npcid, 24, 6000, 0.0f, 0);
-                NetMessage.SendData(54, -1, -1, "", npcid, 0.0f, 0.0f, 0.0f, 0);
+                NetMessage.SendData(53, -1, -1, Terraria.Localization.NetworkText.Empty, npcid, 24, 6000, 0.0f, 0);
+                NetMessage.SendData(54, -1, -1, Terraria.Localization.NetworkText.Empty, npcid, 0.0f, 0.0f, 0.0f, 0);
             }
             if (poison)
             {
                 Custom.AddBuff(20, 6000);
-                NetMessage.SendData(53, -1, -1, "", npcid, 20, 6000, 0.0f, 0);
-                NetMessage.SendData(54, -1, -1, "", npcid, 0.0f, 0.0f, 0.0f, 0);
+                NetMessage.SendData(53, -1, -1, Terraria.Localization.NetworkText.Empty, npcid, 20, 6000, 0.0f, 0);
+                NetMessage.SendData(54, -1, -1, Terraria.Localization.NetworkText.Empty, npcid, 0.0f, 0.0f, 0.0f, 0);
             }
 
-            NetMessage.SendData(23, -1, -1, "", npcid, 0, 0, 0.0f, 0);
+            NetMessage.SendData(23, -1, -1, Terraria.Localization.NetworkText.Empty, npcid, 0, 0, 0.0f, 0);
 
             if (modlevel == 0 && CMType.SpawnMessage != "")
                 TShockAPI.TShock.Utils.Broadcast(CMType.SpawnMessage, Color.MediumPurple);
@@ -336,13 +346,13 @@ namespace CustomMonsters
             int CID = -1;
             if (modlevel <= CMType.MODMaxLevel)
             {
-                int npcid = NPC.NewNPC(X, Y, CMType.BaseType);
+                int npcid = NPC.NewNPC(NPC.GetSpawnSourceForNaturalSpawn(), X, Y, CMType.BaseType);
 //		Console.WriteLine(String.Format("id is {0} X {1} Y {2} - compare {3} and {4}",npcid,X,Y,Main.npc[1].position.X,Main.npc[1].position.Y));
 
                 Main.npc[npcid].SetDefaults(CMType.BaseType);
                 CustomizeMonster(npcid, CMType, modlevel);
                 CID = npcid;
-                NetMessage.SendData(23, -1, -1, "", npcid, 0f, 0f, 0f, 0);
+                NetMessage.SendData(23, -1, -1, Terraria.Localization.NetworkText.Empty, npcid, 0f, 0f, 0f, 0);
             }
             return CID;
         }
@@ -355,11 +365,11 @@ namespace CustomMonsters
                 int spawnTileX;
                 int spawnTileY;
                 TShockAPI.TShock.Utils.GetRandomClearTileWithInRange(X, Y, 10, 10, out spawnTileX, out spawnTileY);
-                int npcid = NPC.NewNPC(spawnTileX*16, spawnTileY*16, CMType.BaseType);
+                int npcid = NPC.NewNPC(NPC.GetSpawnSourceForNaturalSpawn(), spawnTileX *16, spawnTileY*16, CMType.BaseType);
                 Main.npc[npcid].SetDefaults(CMType.BaseType);
                 CustomizeMonster(npcid, CMType, modlevel);
                 CID = npcid;
-                NetMessage.SendData(23, -1, -1, "", npcid, 0f, 0f, 0f, 0);
+                NetMessage.SendData(23, -1, -1, Terraria.Localization.NetworkText.Empty, npcid, 0f, 0f, 0f, 0);
             }
             return CID;
         }
@@ -490,10 +500,10 @@ namespace CustomMonsters
                         if (Collision.CanHit(Start, 4, 4, Target, Main.player[targetid].width,
                                              Main.player[targetid].height))
                         {
-                            int New = Projectile.NewProjectile(Start.X, Start.Y, VelocityX, VelocityY, ProjectileType,
-                                                               ProjectileDamage, (float) 0.5);
+                            int New = Projectile.NewProjectile(Projectile.GetNoneSource(), new Vector2(Start.X, Start.Y), new Vector2(VelocityX, VelocityY), ProjectileType,
+                                                               ProjectileDamage, 1);
                             Main.projectile[New].SetDefaults(ProjectileType);
-                            NetMessage.SendData(27, -1, -1, "", New, 0f, 0f, 0f, 0);
+                            NetMessage.SendData(27, -1, -1, Terraria.Localization.NetworkText.Empty, New, 0f, 0f, 0f, 0);
                         }
                     }
                 }
@@ -525,7 +535,7 @@ namespace CustomMonsters
 
                 foreach (ShotTile bt in BlitzGrid)
                 {
-                    int blitzshot = NPC.NewNPC((int) (X + (2*bt.X) + 10), (int) (Y + (2*bt.Y) + 23), blitztype, 0);
+                    int blitzshot = NPC.NewNPC(NPC.GetSpawnSourceForNaturalSpawn(), (int) (X + (2*bt.X) + 10), (int) (Y + (2*bt.Y) + 23), blitztype, 0);
                     Main.npc[blitzshot].SetDefaults(blitztype);
                 }
             }
@@ -536,7 +546,7 @@ namespace CustomMonsters
             CustomMonsterType CMType = CMTypes.Find(cmt => cmt.Name == SCMType);
             if (CMType == null)
             {
-                Log.ConsoleError("The cmtype could not be found\n");
+                Console.Error.WriteLine("The cmtype could not be found\n");
                 return;
             }
 
@@ -565,7 +575,7 @@ namespace CustomMonsters
                 {
                     foreach (ShotTile bt in BlitzGrid)
                     {
-                        int blitzshot = NPC.NewNPC((int) (X + (2*bt.X) + 10), (int) (Y + (2*bt.Y) + 23), CMType.BaseType,
+                        int blitzshot = NPC.NewNPC(NPC.GetSpawnSourceForNaturalSpawn(), (int) (X + (2*bt.X) + 10), (int) (Y + (2*bt.Y) + 23), CMType.BaseType,
                                                    0);
                         CustomizeMonster(blitzshot, CMType, 0);
                     }
@@ -583,21 +593,21 @@ namespace CustomMonsters
             List<CustomMonsterType> Forest = CMTypes.FindAll(cmt => cmt.Forest.SpawnHere == true);
 
             List<CMPlayer> CorruptionPlayers =
-                CMPlayers.FindAll(player => player.TSPlayer != null && player.TSPlayer.TPlayer.zoneEvil == true);
+                CMPlayers.FindAll(player => player.TSPlayer != null && (player.TSPlayer.TPlayer.ZoneCorrupt || player.TSPlayer.TPlayer.ZoneCrimson) == true);
             List<CMPlayer> DungeonPlayers =
-                CMPlayers.FindAll(player => player.TSPlayer != null && player.TSPlayer.TPlayer.zoneDungeon == true);
+                CMPlayers.FindAll(player => player.TSPlayer != null && player.TSPlayer.TPlayer.ZoneDungeon == true);
             List<CMPlayer> MeteorPlayers =
-                CMPlayers.FindAll(player => player.TSPlayer != null && player.TSPlayer.TPlayer.zoneMeteor == true);
+                CMPlayers.FindAll(player => player.TSPlayer != null && player.TSPlayer.TPlayer.ZoneMeteor == true);
             List<CMPlayer> HallowPlayers =
-                CMPlayers.FindAll(player => player.TSPlayer != null && player.TSPlayer.TPlayer.zoneHoly == true);
+                CMPlayers.FindAll(player => player.TSPlayer != null && player.TSPlayer.TPlayer.ZoneHallow == true);
             List<CMPlayer> JunglePlayers =
-                CMPlayers.FindAll(player => player.TSPlayer != null && player.TSPlayer.TPlayer.zoneJungle == true);
+                CMPlayers.FindAll(player => player.TSPlayer != null && player.TSPlayer.TPlayer.ZoneJungle == true);
             List<CMPlayer> ForestPlayers =
                 CMPlayers.FindAll(
                     player =>
                     player.TSPlayer != null &&
-                    (player.TSPlayer.TPlayer.zoneJungle == false && player.TSPlayer.TPlayer.zoneDungeon == false &&
-                     player.TSPlayer.TPlayer.zoneMeteor == false && player.TSPlayer.TPlayer.zoneEvil == false));
+                    (player.TSPlayer.TPlayer.ZoneJungle == false && player.TSPlayer.TPlayer.ZoneDungeon == false &&
+                     player.TSPlayer.TPlayer.ZoneMeteor == false && (player.TSPlayer.TPlayer.ZoneCorrupt || player.TSPlayer.TPlayer.ZoneCrimson) == false));
 
             #region corruption spawn
 
@@ -844,8 +854,8 @@ namespace CustomMonsters
                     {
                         foreach (NPC npc in cmt.Replaces)
                         {
-                            var name = Main.npc[i].name;
-                            if (name != null && npc.name.ToLower() == name.ToLower())
+                            var name = Main.npc[i].FullName;
+                            if (name != null && npc.FullName.ToLower() == name.ToLower())
                             {
 
                                 CustomizeMonster(i, cmt, 0);
@@ -867,7 +877,7 @@ namespace CustomMonsters
             List<CustomMonster> CAIMs = CustomMonsters.FindAll(cm => cm.CMType.CustomAIStyle.HasValue);
             foreach (CustomMonster CM in CAIMs)
             {
-                NetMessage.SendData(23, -1, -1, "", CM.ID, 0f, 0f, 0f, 0);
+                NetMessage.SendData(23, -1, -1, Terraria.Localization.NetworkText.Empty, CM.ID, 0f, 0f, 0f, 0);
             }
         }
 
